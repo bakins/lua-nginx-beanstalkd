@@ -24,11 +24,16 @@ function mt.pool_id(self)
 end
 
 local function pool_push(client)
-    local id = client:pool_id()
-    local pool = pool_cache[id]
+    local pool = client.pool
+    -- pool would not be set on first push
     if not pool then
-        pool = { length = 0 }
-        pool_cache[id] = pool
+        local id = client:pool_id()
+        pool = pool_cache[id]
+        if not pool then
+            pool = { length = 0 }
+            pool_cache[id] = pool
+        end
+        client.pool = pool
     end
     local max = client.pool_max_size or 8
     if pool.length >= max then
@@ -84,7 +89,7 @@ function _M.new(host, port, options)
     port = port or 11300
     local tube = options.tube or "default"
     
-    local self = pool_pop(host, port, tube)
+    local self, pool = pool_pop(host, port, tube)
     if self then
         return self
     end
