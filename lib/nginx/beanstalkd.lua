@@ -14,23 +14,14 @@ local function pool_id(host, port, tube)
     return concat({host or "", port or "", tube or ""}, "|")
 end
 
-function mt.pool_id(self)
-    local id = self._pool_id
-    if not id then
-        id = pool_id(self.host, self.port, self.tube)
-        self._pool_id = id
-    end
-    return id
-end
-
 local function pool_push(client)
     local pool = client.pool
     -- pool would not be set on first push
     if not pool then
-        local id = client:pool_id()
+        local id = pool_id(client.host, client.port, client.tube)
         pool = pool_cache[id]
         if not pool then
-            pool = { length = 0 }
+            pool = { length = 0, id = id }
             pool_cache[id] = pool
         end
         client.pool = pool
