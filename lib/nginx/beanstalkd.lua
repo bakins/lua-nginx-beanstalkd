@@ -7,6 +7,54 @@ local mt = {}
 local tcp = ngx.socket.tcp
 local match, concat = string.match, table.concat
 
+-- experimental pool support. simple stack
+local pool_cache = {}
+
+local function pool_id(host, port, tube)
+    return concat({host or "", port or "", tube or ""}, "|")
+end
+
+function mt.pool_id(self)
+    local id = self._pool_id
+    if not id then
+        id = pool_id(self.host, self.port, self.tube)
+        self._pool_id = id
+    end
+    return id
+end
+
+local function pool_push(client)
+    local id = client:pool_id()
+    local pool = pool_cache[id]
+    if not pool then
+        pool = { length = 0 }
+        pool_cache[id] = pool
+    end
+    local max = client.pool_max_size or 8
+    if pool.length >= max then
+        return false
+    end
+    pool.length = pool.length + 1
+    client.next = pool.clients
+    pool.clients = client
+    return true
+end
+
+local function pool_pop(host, port, tube)
+    local id = pool_id(host, port, tube)
+    local pool = pool_cache[id]
+    if not pool then
+        return nil
+    end
+    if pool.length <= 0 then
+        pool.length = 0
+        return nil
+    end
+    pool.length = pool.length - 1
+    pool.clients = client.next
+    client.next = nil
+    return client
+end
 
 -- the issue as currently implemented is if we get a keepalive connection
 -- and we had specified a tube on it, but do not on this client, then we will
@@ -34,23 +82,31 @@ function _M.new(host, port, options)
     options = options or {}
     host = host or "127.0.0.1"
     port = port or 11300
-    local self = {
+    local tube = options.tube or "default"
+    
+    local self = pool_pop(host, port, tube)
+    if self then
+        return self
+    end
+    
+    local sock = tcp()
+    self = {
         keepalive_timeout = options.keepalive_timeout,
         keepalive_pool_size = options.keepalive_pool_size,
         timeout = options.timeout,
-        tube = options.tube or "default",
-        sock = tcp()
+        tube = tube,
+        sock = sock
     }
     
-    local ok, err = self.sock:connect(host, port)
+    local ok, err = sock:connect(host, port)
     if not ok then
         return nil, err
     end
     if self.timeout then
-        self.sock:settimeout(timeout)
+        sock:settimeout(timeout)
     end
 
-    if "default" ~= self.tube then
+    if self.tube and "default" ~= self.tube then
         local ok, err = use(self, self.tube)
         if not ok then
             return nil, ("error using tube: " .. err)
@@ -69,7 +125,10 @@ function mt.close(self, really_close)
         if self.keepalive_timeout or self.keepalive_pool_size then
             return self.sock:setkeepalive(self.keepalive_timeout, self.keepalive_pool_size)
         else
-            return self.sock:setkeepalive()
+            local rc = self.sock:setkeepalive()
+            if rc then
+                pool_push(self)
+            end
         end
     end
 end
