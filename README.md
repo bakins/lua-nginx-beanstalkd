@@ -1,3 +1,7 @@
+*This is no longer under development*
+
+See https://github.com/bakins/lua-resty-beanstalkd
+
 lua-nginx-beanstalkd
 ====================
 
